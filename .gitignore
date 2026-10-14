@@ -1,0 +1,20 @@
+# Repository PUBBLICO (portfolio). Tutto il materiale del caso sta in caso/ e resta solo su questa
+# macchina: media originali, dati, documenti consegnati, fascicolo legale, fonti, lavorazione.
+# Cio che ne va mostrato si pubblica solo come versione anonimizzata generata da script.
+# tools/Test-Anonymization.py verifica il perimetro pubblico prima di ogni commit.
+caso/
+
+# Layer privato del sistema di progetto
+_notes/
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Segreti: mai committati
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+__pycache__/
+*.tmp
