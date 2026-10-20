@@ -40,6 +40,7 @@ Norme caricate su richiesta, una riga per situazione.
 - `git worktree list` mostra più di un albero, se ne crea o se ne rimuove uno: skill `alberi-di-lavoro`.
 - Cambia il modo in cui si prova e si rilascia, e va deciso come separare test e produzione: skill `separazione-ambienti`.
 - Si imposta o si verifica user.name e user.email, si collega o si cambia il remoto o l'alias SSH, un push fallisce per permessi: skill `identita-git`.
+- Va prodotto, modificato o convertito un artefatto visivo o documentale, cioè un documento, una presentazione, un PDF, un'immagine, un'animazione, un audio o un impaginato, oppure si sta per scrivere uno script o installare una libreria per farlo: skill `craft-apps`, che prima verifica in locale le applicazioni Craft installate e le usa senza rete né token.
 
 ## Apprendimenti recenti
 
