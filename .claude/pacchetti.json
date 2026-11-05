@@ -1,0 +1,16 @@
+{
+  "versione": 1,
+  "pacchetti": {
+    "anonymization": {
+      "stato": "adottato",
+      "data": "2026-11-04",
+      "motivo": "Ricognizione di adozione preesistente: CLAUDE.md prescrive Test-Anonymization.py; strumento e configurazione privata ignorata erano gia presenti. Nessuna nuova attivazione dedotta dalla sola presenza dei modelli.",
+      "evidenza": {
+        "file": "CLAUDE.md",
+        "righe": [
+          54
+        ]
+      }
+    }
+  }
+}
