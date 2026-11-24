@@ -74,6 +74,10 @@ Il file di ripresa si legge dopo, non prima, e con la consapevolezza di quanto s
 
 Si consegna un recap conciso in quattro righe: dove siamo, che cosa risulta fatto, che cosa la verifica ha trovato di non scritto, e il prossimo passo concreto. Poi ci si ferma e si aspetta, senza cominciare il lavoro: una sessione che riprende e si mette subito a fare toglie all'utente l'unico momento in cui può correggere una premessa sbagliata.
 
+Prima del recap si esegue `python .claude/templates/tools/verifica-pacchetti.py --riepilogo --progetto . --template .`, e le sue righe entrano nel recap così come sono: il commit del template a cui il progetto è allineato, i pacchetti adottati, quelli presenti nel progetto ma mai registrati, quelli rifiutati o rimandati, e la riga del gate. Il proprietario deve vedere a ogni ripresa che cosa il progetto usa del template senza lanciare niente a mano.
+
+Se la riga del gate dice «Gate dovuto», subito dopo il recap si avvia la skill `gate-pacchetti`, senza aspettare che il proprietario la chiami: è l'unica eccezione al fermarsi dopo il recap, perché il gate è esso stesso un dialogo che chiede prima di fare, e non installa niente senza una risposta. I pacchetti presenti ma mai registrati non si ripropongono come nuovi: si mostrano e si chiede soltanto di registrarli. La ragione è misurata: l'allineamento in blocco porta il catalogo nel progetto senza eseguire il gate, e un progetto di novanta commit allineato così non aveva mai fatto una tornata; il solo avviso «Gate dovuto» lasciava poi al proprietario un comando in più da ricordare, che è il genere di passo che non si fa (L-002 di un progetto istanziato, 2026-11-20).
+
 ## Chiudere la sessione, che è la metà che rende utile l'altra
 
 Questa skill funziona solo se qualcuno registra l'impronta, e registrarla è l'ultimo atto di una sessione, non il primo della successiva.

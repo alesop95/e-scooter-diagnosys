@@ -91,12 +91,149 @@ def audit(project, recipes, catalog):
     return result
 
 
+def voci_catalogo(catalog):
+    return sorted(set(re.findall(r"^\| `([a-z0-9][a-z0-9-]*)`", catalog, re.M)))
+
+
+def gate(project, catalog):
+    """Quante voci del catalogo nessuna tornata del gate ha mai visto né deciso.
+
+    Dal 2026-11-20 (L-002 di un progetto istanziato). Un allineamento in blocco porta il catalogo
+    nel progetto ma non esegue il gate, che è riservato al proprietario, e niente lo
+    diceva alla sessione successiva: un progetto con novanta commit non aveva mai fatto
+    una tornata. Il solo conto dei pacchetti senza decisione non basta, perché il gate
+    propone soltanto i settori che riconosce e il resto resterebbe non censito per sempre:
+    per questo ogni tornata registra in `tornate` l'elenco delle voci che ha visto, e il
+    debito sono le voci comparse dopo l'ultima tornata e mai decise."""
+    names = voci_catalogo(catalog)
+    if not names:
+        return None
+    path = project / REGISTRO
+    data = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
+    decided = set(data.get("pacchetti") or {})
+    rounds = data.get("tornate") or []
+    if not isinstance(rounds, list) or not all(isinstance(t, dict) and isinstance(t.get("catalogo"), list) for t in rounds):
+        raise ValueError("tornate del gate non valide nel registro dei pacchetti")
+    seen = set()
+    for t in rounds:
+        seen.update(t["catalogo"])
+    new = [n for n in names if n not in seen and n not in decided]
+    last = max((str(t.get("data", "")) for t in rounds), default="") or None
+    return {"dovuto": bool(new), "nuovi": new, "ultima": last, "voci": len(names), "registro": path.is_file()}
+
+
+def riga_gate(state):
+    if state is None:
+        return "Gate dei pacchetti non calcolabile: catalogo assente."
+    if not state["dovuto"]:
+        return "Gate in pari: tutte le %d voci del catalogo sono state viste dalla tornata del %s." % (state["voci"], state["ultima"])
+    quando = "ultima tornata registrata il %s" % state["ultima"] if state["ultima"] else "nessuna tornata registrata"
+    return ("Gate dovuto: %d voci del catalogo su %d non sono mai state viste dal gate né decise (%s). "
+            "La tornata la avvia /riprendi, oppure /gate-pacchetti." % (len(state["nuovi"]), state["voci"], quando))
+
+
+def registra_tornata(project, catalog, data):
+    """Scrive nel registro la tornata appena conclusa con le voci del catalogo viste."""
+    names = voci_catalogo(catalog)
+    if not names:
+        raise ValueError("catalogo assente: nessuna tornata da registrare")
+    path = project / REGISTRO
+    registry = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {"versione": 1, "pacchetti": {}}
+    registry.setdefault("tornate", []).append({"data": data, "catalogo": names})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    decisioni(project)
+    return len(names)
+
+
+def riepilogo(project, template):
+    """Le righe che /riprendi mostra all'apertura: dove sta il progetto rispetto al template e
+    che cosa usa del catalogo. Dal 2026-11-20: il proprietario voleva vederlo a ogni ripresa
+    senza lanciare niente a mano, e prima lo sapeva solo chi apriva il registro."""
+    righe = []
+    marcatore = project / ".claude/allineamento-template.json"
+    try:
+        m = json.loads(marcatore.read_text(encoding="utf-8-sig"))
+        righe.append("Template: allineato al commit %s del %s (%s)." % (
+            str(m.get("template_commit", "?"))[:7], m.get("allineato_il", "?"), m.get("strumento", "?")))
+    except (OSError, ValueError):
+        righe.append("Template: nessun allineamento registrato in .claude/allineamento-template.json.")
+    try:
+        catalog = (template / ".claude/templates/PACKAGES.md").read_text(encoding="utf-8")
+    except OSError:
+        righe.append("Pacchetti: catalogo assente, niente da riepilogare.")
+        return righe
+    try:
+        ricette_path = template / RICETTE
+        recipes = json.loads(ricette_path.read_text(encoding="utf-8")) if ricette_path.is_file() else {}
+        report = audit(project, recipes, catalog)
+        choices = decisioni(project)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        righe.append("Pacchetti: registro non leggibile (%s)." % error)
+        return righe
+    adottati = ["%s (%s)" % (r["pacchetto"], r["istanza"]) for r in report if r["decisione"] == "adottato"]
+    righe.append("Pacchetti adottati: " + (", ".join(adottati) if adottati else "nessuno registrato in " + REGISTRO) + ".")
+    # Installati prima che il registro esistesse, o a mano: in uso ma senza decisione scritta.
+    # La tornata del gate li mostra e chiede soltanto di registrarli.
+    presenti = {r["pacchetto"] for r in report
+                if r["decisione"] == "non-censito" and r["istanza"] in ("completo", "parziale")}
+    # Le ricette coprono pochi pacchetti: il riconoscimento per skill e strumenti è quello di
+    # cerca-pacchetto.py, riusato invece di riscriverlo.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cerca_pacchetto", Path(__file__).with_name("cerca-pacchetto.py"))
+        cerca = importlib.util.module_from_spec(spec)
+        # @dataclass cerca il modulo in sys.modules mentre lo si esegue
+        sys.modules[spec.name] = cerca
+        spec.loader.exec_module(cerca)
+        for voce in cerca.leggi_catalogo(template / ".claude/templates/PACKAGES.md"):
+            if voce.nome not in choices and cerca.adottato(voce, project, template / ".claude/templates"):
+                presenti.add(voce.nome)
+    except (OSError, ImportError, AttributeError) as error:
+        righe.append("Riconoscimento dei pacchetti installati non riuscito: %s." % error)
+    presenti = sorted(presenti)
+    if presenti:
+        righe.append("Pacchetti presenti ma mai registrati: " + ", ".join(presenti) + ".")
+    for stato in ("rifiutato", "rimandato"):
+        nomi = sorted(n for n, e in choices.items() if e.get("stato") == stato)
+        if nomi:
+            righe.append("Pacchetti %s: %s." % ("rifiutati" if stato == "rifiutato" else "rimandati", ", ".join(nomi)))
+    try:
+        righe.append(riga_gate(gate(project, catalog)))
+    except (OSError, ValueError, TypeError) as error:
+        righe.append("Gate non calcolabile: %s." % error)
+    return righe
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--progetto", type=Path, default=Path("."))
     parser.add_argument("--template", type=Path, default=Path("."))
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--gate", action="store_true",
+                        help="dice soltanto se una tornata del gate è dovuta e su quante voci; esce sempre 0")
+    parser.add_argument("--registra-tornata", action="store_true",
+                        help="a fine tornata del gate: registra le voci del catalogo viste, con la data di sistema")
+    parser.add_argument("--riepilogo", action="store_true",
+                        help="per /riprendi: allineamento al template, pacchetti adottati, rifiutati e rimandati, stato del gate")
     args = parser.parse_args()
+    if args.gate or args.registra_tornata:
+        try:
+            catalog = (args.template / ".claude/templates/PACKAGES.md").read_text(encoding="utf-8")
+            if args.registra_tornata:
+                import datetime
+                n = registra_tornata(args.progetto.resolve(), catalog, datetime.date.today().isoformat())
+                print("Tornata registrata in %s: %d voci del catalogo viste." % (REGISTRO, n))
+            print(riga_gate(gate(args.progetto.resolve(), catalog)))
+            return 0
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print("gate non calcolabile: " + str(error), file=sys.stderr)
+            return 0 if args.gate else 2
+    if args.riepilogo:
+        # Esce sempre 0: è la vista che /riprendi mostra all'apertura, non un controllo.
+        for riga in riepilogo(args.progetto.resolve(), args.template):
+            print(riga)
+        return 0
     try:
         recipes = json.loads((args.template / RICETTE).read_text(encoding="utf-8"))
         report = audit(args.progetto.resolve(), recipes, (args.template / ".claude/templates/PACKAGES.md").read_text(encoding="utf-8"))

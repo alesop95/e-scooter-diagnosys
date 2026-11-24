@@ -77,11 +77,22 @@ def leggi_elenco(radice: Path, esplicito: str = "", stage: bool = False) -> tupl
     # Il controllo dei commit usa l'elenco della macchina, con il suo ambito: quello del template
     # serve a ciò che il template propaga, e non dice quali repository della macchina sono aziendali.
     candidati = [Path(esplicito)] if esplicito else ([ELENCHI[1]] if stage else [radice / ELENCHI[0], ELENCHI[1]])
-    for f in candidati:
-        if f.is_file():
-            voci = [r.strip() for r in f.read_text(encoding="utf-8").splitlines() if r.strip() and not r.strip().startswith("#")]
-            return f, voci
-    return None, []
+    letti = [f for f in candidati if f.is_file()]
+    if not letti:
+        return None, []
+    if esplicito or stage:
+        letti = letti[:1]
+    # Nel template si leggono entrambi gli elenchi e non il primo trovato: il 2026-11-17 una voce
+    # che stava solo nell'elenco della macchina, il nome del repository del template, e' arrivata
+    # con la passata nei progetti aziendali, dove il gancio di commit legge proprio quell'elenco e
+    # ha rifiutato quattro commit. Il controllo del template deve fermare cio' che i progetti fermano.
+    voci = []
+    for f in letti:
+        for r in f.read_text(encoding="utf-8").splitlines():
+            r = r.strip()
+            if r and not r.startswith("#") and r not in voci:
+                voci.append(r)
+    return letti[0], voci
 
 
 def ambiti(voci: list) -> list:
@@ -226,12 +237,19 @@ def forme_nel_testo(rel: str, testo: str, ammesse: set, forme: list) -> list:
 
 
 def testi_in_stage(radice: Path):
-    """I file in stage letti dall'indice, cioe' il contenuto che il commit avra' davvero."""
+    """I file in stage letti dall'indice, cioe' il contenuto che il commit avra' davvero.
+
+    I binari si saltano come in `testi_tracciati`: nei byte di un PDF o di un font una forma
+    come quella di un percorso privato compare per caso (il 2026-11-24 un font incorporato in un
+    PDF generato conteneva «e:/J» e fermava ogni commit che lo includeva)."""
     nomi = git(radice, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR").stdout.decode("utf-8", errors="replace")
     for rel in [p for p in nomi.split("\0") if p]:
         if Path(rel).name in (QUESTO, AMMESSE.name):
             continue
-        yield rel, git(radice, "show", ":" + rel).stdout.decode("utf-8", errors="ignore")
+        grezzo = git(radice, "show", ":" + rel).stdout
+        if b"\0" in grezzo[:8192]:
+            continue
+        yield rel, grezzo.decode("utf-8", errors="ignore")
 
 
 def testi_tracciati(radice: Path):
@@ -368,6 +386,9 @@ def autotest() -> int:
 
     with tempfile.TemporaryDirectory() as d:
         r = Path(d)
+        # L'elenco della macchina si sostituisce con uno di prova: le prove non leggono quello vero.
+        macchina_vera = ELENCHI[1]
+        ELENCHI[1] = r / "macchina" / "identita-personali.txt"
 
         def esegui(*a, **k):
             buf = io.StringIO()
@@ -416,6 +437,13 @@ def autotest() -> int:
         caso("un segnaposto dichiarato passa anche quando chiude il periodo", esegui()[0] == 0)
         (r / ".claude" / "rules" / "identita.md").write_text("pulito\n", encoding="utf-8")
         caso("tolte le forme, il perimetro torna verde", esegui()[0] == 0)
+        ELENCHI[1].parent.mkdir(parents=True)
+        ELENCHI[1].write_text("repo-privato-della-macchina\n", encoding="utf-8")
+        (r / ".claude" / "rules" / "identita.md").write_text("titolo: repo-privato-della-macchina\n", encoding="utf-8")
+        rc, out = esegui()
+        caso("una voce che sta solo nell'elenco della macchina ferma il template, come ferma i progetti", rc == 1 and "identita.md:1" in out)
+        (r / ".claude" / "rules" / "identita.md").write_text("pulito\n", encoding="utf-8")
+        ELENCHI[1].unlink()
 
         # impronte
         elenco.write_text("%s\n%s\n" % (impronta("persona.privata@posta.example"), impronta("utentepriv")), encoding="utf-8")
@@ -455,6 +483,12 @@ def autotest() -> int:
         rc, out = esegui(str(elenco), stage=True)
         caso("--stage ferma un percorso privato mai censito, per la forma", rc == 1 and "forma di un percorso privato" in out)
         caso("--stage non stampa il percorso", "altro-privato" not in out)
+        (r / "doc.md").write_text("nessun dato\n", encoding="utf-8")
+        (r / "font.bin").write_bytes(b"%PDF\0\x01" + b"e:/J" + b"\0" * 16)
+        subprocess.run(["git", "-C", str(r), "add", "doc.md", "font.bin"], check=True)
+        caso("--stage salta i binari: una forma caduta per caso nei byte non ferma", esegui(str(elenco), stage=True)[0] == 0)
+        subprocess.run(["git", "-C", str(r), "rm", "-q", "--cached", "font.bin"], check=True)
+        (r / "font.bin").unlink()
         (r / "doc.md").write_text("contatto: persona.privata@posta.example\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(r), "add", "doc.md"], check=True)
         subprocess.run(["git", "-C", str(r), "config", "user.email", "io@privato.example"], check=True)
@@ -504,6 +538,7 @@ def autotest() -> int:
         elenco.unlink()
         rc, out = esegui(str(r / "manca.txt"), stage=True)
         caso("--stage senza elenco ferma invece di avvisare", rc == NON_CONTROLLATO and "NON e' controllato" in out)
+    ELENCHI[1] = macchina_vera
     caso("l'impronta è quella del testo in minuscolo", impronta(" Ab@C.d ") == impronta("ab@c.d"))
     print("\n%d casi superati su %d" % (casi - rossi, casi))
     return 1 if rossi else 0
