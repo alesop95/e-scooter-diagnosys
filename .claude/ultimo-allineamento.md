@@ -2,7 +2,7 @@
 
 <!-- generato da allinea-dal-template.py -->
 
-Commit a monte: `fb2337cc78c297b74c6745bdf13451f167ee65b5`. File interessati dalla passata: 0. Commit e push del progetto restano manuali.
+Commit a monte: `99b13ffc66bf1b78a067f9adebe007b3af546df4`. File interessati dalla passata: 0. Commit e push del progetto restano manuali.
 
 | Esito | File |
 |---|---|
